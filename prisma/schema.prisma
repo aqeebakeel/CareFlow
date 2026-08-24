@@ -1,0 +1,124 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  PATIENT
+  DOCTOR
+  ADMIN
+}
+
+enum AppointmentStatus {
+  HELD
+  CONFIRMED
+  CANCELLED
+  CANCELLED_BY_DOCTOR
+  COMPLETED
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  FAILED
+  COMPLETED
+}
+
+enum JobTaskType {
+  SEND_EMAIL
+  SEND_CALENDAR_INVITE
+  RETRY_PRE_VISIT_SUMMARY
+  RETRY_POST_VISIT_SUMMARY
+  NOTIFY_LEAVE_CANCELLATION
+  LLM_RETRY_PRE_VISIT
+  SEND_CONFIRMATION_EMAIL
+  LLM_RETRY_POST_VISIT
+  SEND_CANCELLATION_EMAIL
+  SYNC_CALENDAR
+  CANCEL_CALENDAR
+  SEND_MEDICATION_REMINDER
+}
+
+model User {
+  id                  String         @id @default(uuid()) @db.Uuid
+  email               String         @unique @db.Citext
+  fullName            String
+  role                UserRole
+  doctorProfile       DoctorProfile?
+  patientAppointments Appointment[]  @relation("PatientAppointments")
+  doctorAppointments  Appointment[]  @relation("DoctorAppointments")
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+}
+
+model DoctorProfile {
+  id              String        @id @default(uuid()) @db.Uuid
+  userId          String        @unique @db.Uuid
+  specialisation  String
+  workingHours    Json
+  slotDurationMin Int           @default(30)
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  leaves          Leave[]
+  appointments    Appointment[]
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+model Leave {
+  id              String        @id @default(uuid()) @db.Uuid
+  doctorProfileId String        @db.Uuid
+  startsAt        DateTime
+  endsAt          DateTime
+  reason          String?
+  doctorProfile   DoctorProfile @relation(fields: [doctorProfileId], references: [id], onDelete: Cascade)
+  createdAt       DateTime      @default(now())
+
+  @@index([doctorProfileId, startsAt, endsAt])
+}
+
+model Appointment {
+  id                 String            @id @default(uuid()) @db.Uuid
+  patientId          String            @db.Uuid
+  doctorId           String            @db.Uuid
+  doctorProfileId    String            @db.Uuid
+  startsAt           DateTime
+  endsAt             DateTime
+  status             AppointmentStatus @default(HELD)
+  holdExpiresAt      DateTime?
+  symptoms           String?
+  preVisitSummary    String?
+  postVisitSummary   String?
+  rawClinicalNotes   String?
+  cancellationReason String?
+  calendarEventId    String?
+  patient            User              @relation("PatientAppointments", fields: [patientId], references: [id], onDelete: Restrict)
+  doctor             User              @relation("DoctorAppointments", fields: [doctorId], references: [id], onDelete: Restrict)
+  doctorProfile      DoctorProfile     @relation(fields: [doctorProfileId], references: [id], onDelete: Restrict)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  @@index([doctorProfileId, startsAt])
+  @@index([doctorId, startsAt])
+  @@index([patientId, startsAt])
+  @@index([status, holdExpiresAt])
+}
+
+model JobOutbox {
+  id          String      @id @default(uuid()) @db.Uuid
+  taskType    JobTaskType
+  status      JobStatus   @default(PENDING)
+  payload     Json
+  retryCount  Int         @default(0)
+  availableAt DateTime    @default(now())
+  lastError   String?
+  lockedAt    DateTime?
+  completedAt DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([status, availableAt])
+}
